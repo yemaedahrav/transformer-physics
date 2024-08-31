@@ -55,7 +55,7 @@ def create_probetarget_df(datatypes, traintests, reverse = False):
                     probetargets['datatype'].append(datatype)
                     probetargets['traintest'].append(traintest)
             df = pd.DataFrame(probetargets)
-            # save df
+            # Save the dataframe
             if reverse:
                 df.to_csv(f'dfs/{datatype}_{traintest}_reverseprobetargets.csv')
             else:
@@ -94,7 +94,7 @@ def create_probe_model_df(modeltypes, datatypes, traintests, reverse = False):
                 for CL in range(X.shape[1]):
                     if 'linreg' in datatype:
                         if CL % 2 == 1:
-                            continue # only want even CLs, where predictions happen
+                            continue  # Only want even CLs, where predictions happen
                     for mkey in model_hs.columns:
                         df[mkey].append(mrow[mkey])
                     for pkey in probetargets.columns:
@@ -110,7 +110,6 @@ def create_probe_model_df(modeltypes, datatypes, traintests, reverse = False):
         else:
             alldfs = pd.concat([alldfs, df])
     return alldfs
-
 
 
 def get_savepath(modelpath, targetname, layer, inlayerpos, CL, append = ''):
@@ -159,18 +158,19 @@ def get_dftorun(modeltypes, datatypes, traintests, savename, reverse = False, cc
 
     return df
 
+
 def train_probe(input, output, savepath, save = True):
-    # assumes modelname doesnt have .pth
+    # Assumes that modelname doesnt have .pth
     input, output = input.detach().numpy(), output.detach().numpy()
     if len(input.shape) == 1:
         input = input.reshape(-1, 1)
     clf = Ridge(alpha=1.0)
     clf.fit(input, output)
-    # save clf
+    # Save clf
     if save:
         torch.save(clf, savepath)
     r2 = clf.score(input, output)
-    # get mse
+    # Get MSE
     mse = ((output - clf.predict(input))**2).mean()
     return r2, mse
 
@@ -261,9 +261,7 @@ def train_cca_probes(modeltypes, datatypes, traintests, savename, maxdeg = 5, my
     df = get_dftorun(modeltypes, datatypes, traintests, reverse = False, cca = True)
     print(len(df))
 
-
     # get all indices in df
-
     savedir = f'proberesults_{savename}'
     if savedir not in os.listdir('dfs/proberesults'):
         os.mkdir(f'dfs/proberesults/{savedir}')
@@ -322,48 +320,40 @@ def train_cca_probes(modeltypes, datatypes, traintests, savename, maxdeg = 5, my
                 minidfdf = pd.DataFrame(minidf)
                 minidfdf.to_csv(saveprobes)
 
-    
     minidfdf = pd.DataFrame(minidf)
     minidfdf.to_csv(saveprobes)
     
 
-
-
 if __name__ == '__main__':
-
     my_task_id, num_tasks = None,None
-
     modeltypes = ['underdamped', 'overdamped']
     datatypes = ['overdamped', 'underdamped']
     traintests = ['train', 'test']
-
     pdf = create_probetarget_df(datatypes, traintests, reverse = True)
 
-    #
-    #print(pdf[pdf['']])
-    #print(pdf[(pdf['datatype']=='underdamped') & (pdf['traintest']=='train')])
-    # # print(len(pdf))
+    # print(pdf[pdf['']])
+    # print(pdf[(pdf['datatype']=='underdamped') & (pdf['traintest']=='train')])
+    # print(len(pdf))
     # mpdf = create_probe_model_df(modeltypes, datatypes, traintests, reverse = True)
     # print(len(mpdf))
-    #savestr = 'ALLDAMPEDSPRING'
+    # savestr = 'ALLDAMPEDSPRING'
 
     # ccastr = savestr + 'CCA'
     # train_probes(modeltypes, datatypes, traintests, savestr, my_task_id, num_tasks, reverse = False)
     # train_probes(modeltypes, datatypes, traintests, savestr, my_task_id, num_tasks, reverse = True)
     # maxdeg = 5
-    #train_cca_probes(modeltypes, datatypes, traintests, ccastr, maxdeg, my_task_id, num_tasks)
-    #create_probe_model_df(modeltypes, datatypes, traintests)
+    # train_cca_probes(modeltypes, datatypes, traintests, ccastr, maxdeg, my_task_id, num_tasks)
+    # create_probe_model_df(modeltypes, datatypes, traintests)
 
-    #generate_exp_targets(datatype, traintest)
-    #generate_exp_targets(datatype, traintest, reverse=True)
+    # generate_exp_targets(datatype, traintest)
+    # generate_exp_targets(datatype, traintest, reverse=True)
     # pdf = create_probetarget_df(datatype, traintest, reverse = True)
     # print(len(pdf))
     # mpdf = create_probe_model_df(datatype, traintest, reverse = True)
     # print(len(mpdf))
-    #train_probes(datatype, traintest, my_task_id, num_tasks, reverse = True)
+    # train_probes(datatype, traintest, my_task_id, num_tasks, reverse = True)
     
-    
-    #create_probetarget_df(datatype, traintest)
+    # create_probetarget_df(datatype, traintest)
     # pdf = create_probetarget_df(datatype, traintest)
     # pmdf = create_probe_model_df(datatype, traintest)
     # generate_lr_cca_targets(datatype, traintest)
@@ -372,22 +362,17 @@ if __name__ == '__main__':
     # mpdf = create_probe_model_df(datatype, traintest)
     
     # mpdf = mpdf[mpdf['p-targetname'] == 'lr_wpow']
-    # # reset index
+    # reset index
     # mpdf = mpdf.reset_index(drop = True)
     # datatype = 'wlinreg1cca'
     # mpdf.to_csv(f'dfs/{datatype}_{traintest}_probetorun.csv')
     # print(mpdf['m-layer'].unique(), mpdf['m-emb'].unique())
-    #train_cca_probes(datatype, traintest, 5, my_task_id, num_tasks)
+    # train_cca_probes(datatype, traintest, 5, my_task_id, num_tasks)
 
     # datatype, traintest = 'rlinreg1', 'train'
     # get_model_hs_df(lrdf, datatype, traintest)
     # generate_reverselr_targets(datatype, traintest)
     # create_probetarget_df(datatype, traintest, save = True, reverse = True)
     # create_probe_model_df(datatype, traintest, reverse = True)
-
-    #train_probes(datatype, traintest, my_task_id, num_tasks, reverse = False)
-
-
-
-
-
+    # train_probes(datatype, traintest, my_task_id, num_tasks, reverse = False)
+    

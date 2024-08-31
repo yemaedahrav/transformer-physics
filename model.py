@@ -3,12 +3,13 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import matplotlib.pyplot as plt
-from config import get_default_config
+from config import linreg_config
 
 class NewGELU(nn.Module):
     def forward(self, x):
         return 0.5 * x * (1 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
-    
+
+
 class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -28,11 +29,10 @@ class CausalSelfAttention(nn.Module):
         self.resid_dropout = nn.Dropout(config.resid_pdrop)
 
     def forward(self, x):
-
         B, T, C = x.size() # B is batch size, T is sequence length, C is embedding dimensions 
         assert C == self.n_embd, f"Input embedding dimensions {C} does not match the model embedding dimensions {self.n_embd}"
         # B sentences, each sentence has T words, each word is represented in C dimensions
-        x_proj = self.c_attn(x) # This will make up the Q, K, V matrix. Sends x to 3x dimensions for each matri
+        x_proj = self.c_attn(x) # This will make up the Q, K, V matrix. Sends x to 3x dimensions for each matrix
         q, k, v = x_proj[ : , : , :C ], x_proj[ : , : , C:2*C ], x_proj[ : , : , 2*C:3*C ] # split the 3x dimensions into Q, K, V. all same size as x
         
         n_head = self.n_head
@@ -49,7 +49,6 @@ class CausalSelfAttention(nn.Module):
         att = att + mask
         att = F.softmax(att, dim=-1)
 
-
         att = self.attn_dropout(att)
         y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs). z_i = sum a_ij v_j
         y = y.transpose(1, 2).contiguous().view(B, T, C) # concatenate the n_head attention heads
@@ -62,7 +61,7 @@ class CausalSelfAttention(nn.Module):
         B, T, C = x.size() # B is batch size, T is sequence length, C is embedding dimensions 
         assert C == self.n_embd, f"Input embedding dimensions {C} does not match the model embedding dimensions {self.n_embd}"
         # B sentences, each sentence has T words, each word is represented in C dimensions
-        x_proj = self.c_attn(x) # This will make up the Q, K, V matrix. Sends x to 3x dimensions for each matri
+        x_proj = self.c_attn(x) # This will make up the Q, K, V matrix. Sends x to 3x dimensions for each matrix
         q, k, v = x_proj[ : , : , :C ], x_proj[ : , : , C:2*C ], x_proj[ : , : , 2*C:3*C ] # split the 3x dimensions into Q, K, V. all same size as x
         
         n_head = self.n_head
@@ -74,15 +73,14 @@ class CausalSelfAttention(nn.Module):
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1))) # (B, nh, T, T). doing sig(q_i*k_j)/sqrt(len(k)) to find s_ij (NLP notes)
 
         mask = torch.ones(T,T)*float('-inf')
-        mask = torch.triu(mask, diagonal=1) #can't look ahead. in first word can only look at first word. not ahead
+        mask = torch.triu(mask, diagonal=1) # Can't look ahead. First word can only look at first word. not ahead
         mask = mask.repeat(B, n_head, 1, 1)
         att = att + mask
         att = F.softmax(att, dim=-1)
         return att
     
-    
+# A Block is a transformer block. It has a self attention layer, a feed forward layer, and a layer normalization.  
 class Block(nn.Module):
-    # a block is a transformer block. It has a self attention layer, a feed forward layer, and a layer norm
     def __init__(self, config):
         super().__init__()
         self.ln1 = nn.LayerNorm(config.n_embd)
@@ -95,37 +93,38 @@ class Block(nn.Module):
             dropout = nn.Dropout(config.resid_pdrop)
         ))
         m = self.mlp
-        self.mlpf = lambda x: m.dropout(m.c_proj(m.act(m.c_fc(x)))) # feed forward layer. just fancy shmancy syntax, very basic tho
-
+        self.mlpf = lambda x: m.dropout(m.c_proj(m.act(m.c_fc(x)))) # feed forward layer. just fancy syntax, very basic though
 
     def forward(self, x, layernorm = False, return_hs = False, insert = {}):
-        #BIMT doesnt use layernorm. allegeldy hurts interpretability. here we give ourselves the option to use it
-        #insert is where we can insert our own attention or mlp values. this is for interpretability
-        # assumes insert is a dictionary of {'inlayerpos': {pCL: value}}
+        # insert is where we can insert our own attention or mlp values, this is for interpretability, assumes insert is a dictionary of {'inlayerpos': {pCL: value}}
         def replace(x, key):
             if key in insert:
                 print(key)
                 for CL in insert[key].keys():
                     x[:, CL] = torch.tensor(insert[key][CL])
             return x
+        
         hs = {}
         if layernorm:
             x = self.ln1(x)
         attn = self.attn(x)
         hs['attn'] = attn.clone().detach()
         replace(attn, 'attn')
+        
         x = x + attn
-        replace(x, 'attn-res')
         hs['attn-res'] = x.clone().detach()
+        replace(x, 'attn-res')
+
         if layernorm:
             x = x + self.mlpf(self.ln2(x))
-
         mlpx = self.mlpf(x)
         hs['mlp'] = mlpx.clone().detach()
         replace(mlpx, 'mlp')
+
         x = x + mlpx
         replace(x, 'mlp-res')
         hs['mlp-res'] = x.clone().detach()
+        
         if return_hs:
             return x, hs
         return x
@@ -134,6 +133,7 @@ class Block(nn.Module):
         if layernorm:
             x = self.ln1(x)
         return self.attn.get_attn(x)
+
 
 class Transformer(nn.Module):
     def __init__(self, config):
@@ -159,7 +159,7 @@ class Transformer(nn.Module):
         seq_length = x.size(1)
         positions = torch.arange(0, seq_length, dtype=torch.long, device=x.device)
         if seq_length > self.max_seq_length:
-            # add extra zeroes to positional embeddings
+            # Add extra zeroes to positional embeddings
             diff = seq_length - self.max_seq_length
             extra_pos = torch.zeros(diff, self.n_embed, device=x.device)
             pos_embeddings = torch.cat((self.positional_embeddings, extra_pos), dim=0)
@@ -186,7 +186,7 @@ class Transformer(nn.Module):
         seq_length = x.size(1)
         positions = torch.arange(0, seq_length, dtype=torch.long, device=x.device)
         if seq_length > self.max_seq_length:
-            # add extra zeroes to positional embeddings
+            # Add extra zeroes to positional embeddings
             diff = seq_length - self.max_seq_length
             extra_pos = torch.zeros(diff, self.n_embed, device=x.device)
             pos_embeddings = torch.cat((self.positional_embeddings, extra_pos), dim=0)
@@ -199,7 +199,7 @@ class Transformer(nn.Module):
         hidden_states = {0: {'inp': x}}
 
         for i in range(self.n_layer):
-            x, hs= self.blocks[i](x, layernorm, return_hs = True)
+            x, hs = self.blocks[i](x, layernorm, return_hs = True)
             hidden_states[i+1] = hs
         if layernorm:
             x = self.ln_f(x)
@@ -211,7 +211,7 @@ class Transformer(nn.Module):
         seq_length = x.size(1)
         positions = torch.arange(0, seq_length, dtype=torch.long, device=x.device)
         if seq_length > self.max_seq_length:
-            # add extra zeroes to positional embeddings
+            # Add extra zeroes to positional embeddings
             diff = seq_length - self.max_seq_length
             extra_pos = torch.zeros(diff, self.n_embed, device=x.device)
             pos_embeddings = torch.cat((self.positional_embeddings, extra_pos), dim=0)
@@ -228,29 +228,3 @@ class Transformer(nn.Module):
             attns.append(self.blocks[i].get_attn(x, layernorm))
         attns = torch.stack(attns)
         return attns
-    
-        
-
-
-
-
-
-
-
-if __name__ == "__main__":
-    #linspace between -100 and 100
-    torch.manual_seed(0)
-    config = get_default_config()
-    config.n_embd = 16
-    attn = CausalSelfAttention(config)
-    model = Transformer(config)
-    x = torch.rand(15000,10,2)
-    y = model.return_attns(x)
-    print(y.shape)
-
-    
-
-    # x = 
-    # gelu = NewGELU()
-    # y = gelu(x)
-    # print(y)

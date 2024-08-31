@@ -3,9 +3,9 @@ import torch
 
 class CfgNode:
     """ a lightweight configuration class inspired by yacs """
-    # TODO: convert to subclass from a dict like in yacs?
-    # TODO: implement freezing to prevent shooting of own foot
-    # TODO: additional existence/override checks when reading/writing params?
+    # TODO: Convert to subclass from a dict like in yacs?
+    # TODO: Implement freezing to prevent shooting of own foot
+    # TODO: Additional existence/override checks when reading/writing params?
 
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
@@ -48,7 +48,7 @@ class CfgNode:
             assert len(keyval) == 2, "expecting each override arg to be of form --arg=value, got %s" % arg
             key, val = keyval # unpack
 
-            # first translate val into a python object
+            # First translate val into a python object
             try:
                 val = literal_eval(val)
                 """
@@ -59,7 +59,7 @@ class CfgNode:
             except ValueError:
                 pass
 
-            # find the appropriate object to insert the attribute into
+            # Find the appropriate object to insert the attribute into
             assert key[:2] == '--'
             key = key[2:] # strip the '--'
             keys = key.split('.')
@@ -68,57 +68,26 @@ class CfgNode:
                 obj = getattr(obj, k)
             leaf_key = keys[-1]
 
-            # ensure that this attribute exists
+            # Ensure that this attribute exists
             assert hasattr(obj, leaf_key), f"{key} is not an attribute that exists in the config"
 
-            # overwrite the attribute
+            # Overwrite the attribute
             print("command line overwriting config attribute %s with %s" % (key, val))
             setattr(obj, leaf_key, val)
 
-def get_default_config():
-    C = CfgNode()
-    # either model_type or (n_layer, n_head, n_embd) must be given in the config
-    C.model_type = 'gpt'
-    C.n_layer = 2
-    C.n_head = 1
-    C.n_embd =  16
-    C.in_dim = 2 # we probably don't need to project inputs to higher space but we can with this transformer
-    C.out_dim = C.in_dim # we just want one answer at the end
-
-
-    # I THINK NOT NECESSARY FOR US
-    C.vocab_size = None
-    C.block_size = 10
-    # dropout hyperparameters
-    C.embd_pdrop = 0
-    C.resid_pdrop = 0
-    C.attn_pdrop = 0
-    C.max_seq_length = 6123
-
-    
-    
-    return C
-
 def linreg_config():
     C = CfgNode()
-    # either model_type or (n_layer, n_head, n_embd) must be given in the config
+    # Either model_type or (n_layer, n_head, n_embd) must be given in the config
     C.model_type = 'gpt'
     C.n_layer = 2
     C.n_head = 1
     C.n_embd =  16
     C.in_dim = 1 # we probably don't need to project inputs to higher space but we can with this transformer
-    C.out_dim = C.in_dim # we just want one answer at the end
-
-
-    # I THINK NOT NECESSARY FOR US
-    C.vocab_size = None
-    C.block_size = 10
-    # dropout hyperparameters
+    C.out_dim = C.in_dim # We just want one answer at the end
+    #C.block_size = 10
+    C.max_seq_length = 65*2
+    # Dropout hyperparameters
     C.embd_pdrop = 0
     C.resid_pdrop = 0
     C.attn_pdrop = 0
-    C.max_seq_length = 65*2
-
-    
-    
     return C

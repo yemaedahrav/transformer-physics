@@ -1,47 +1,61 @@
-import torch
 import os
+import sys
+import torch
 from torch.utils.data import DataLoader, TensorDataset
+from tqdm import tqdm
 from model import Transformer
 from util import set_seed
-from config import get_default_config, linreg_config
-from tqdm import tqdm
-from data import generate_springdata, omega1to2, generate_dampedspringdata
-import sys
+from config import linreg_config
+from data import generate_linregdata
+
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(device)
 
-def train(config, traindata, testdata,CL=65, loadmodel = False, fname = 'spring', dir = 'models', batch_size = 64, num_epochs = 20000, lr = 0.001):
+def train(config, traindata, testdata, CL=65, loadmodel = False, fname = 'linreg', dir = 'models', batch_size = 64, num_epochs = 1, lr = 0.001):
     set_seed(10)
     if config is None:
-        config = get_default_config() 
+        config = linreg_config() 
     base = f'{fname}_{config.n_embd}emb_{config.n_layer}layer'
     filebase = f'{base}_{CL}CL_{num_epochs}epochs_{lr}lr_{batch_size}batch'
     totalbase = f'{dir}/{base}/{filebase}'
     modelfile = f'{totalbase}_model.pth'
     lossesfile = f'{totalbase}_losses.pth'
+    print("base: ", base)
+    print("filebase: ", filebase)
+    print("totalbase: ", totalbase)
+    print("modelfile: ",modelfile)
+    print("lossesfile: ", lossesfile)
 
     if base not in os.listdir(dir):
         os.mkdir(f'{dir}/{base}')
 
     if 'linreg' in fname:
         traindata = traindata.unsqueeze(-1)
+        print("Linear Regression Train Data: ", traindata.shape)
         testdata = testdata.unsqueeze(-1)
-    #TODO; ONLY USING 5000 DATAPOINTS IS THAT BAD
-    # randomize trandata
+        print("Linear Regression Test Data: ", testdata.shape)
+
+    # Randomize traindata
     traindata = traindata[torch.randperm(traindata.size()[0])]
-    traindata = traindata[:5000,:CL+1,:] # only use 10 timesteps for transformer predictions. it's shown an ability to learn off of this.
+    traindata = traindata[:5000,:CL+1,:] # Only use 10 timesteps for transformer predictions. It's shown an ability to learn off of this.
     X, y = traindata[:,:-1,:], traindata[:,1:,:]
-    #X, y = trainxy #TODO CHANGE IMPLEMENTATION
+    print("X", X.shape)
+    print("y", y.shape)
     
+    # Train and in distribution test data
     div = int(0.8*len(X))
     X_train, y_train = X[:div], y[:div]
     X_test_in, y_test_in = X[div:], y[div:]
+    print("X_train", X_train.shape)
+    print("y_train", y_train.shape)
+    print("X_test_in", X_test_in.shape)
+    print("y_test_in", y_test_in.shape)
 
-    testdata = testdata[:,:CL+1,:] # only use 10 timesteps for transformer predictions.rest of data is for icl experiments
+    testdata = testdata[:,:CL+1,:] # Only use 10 timesteps for transformer predictions. Rest of the data is for ICL experiments
     X_test_out, y_test_out = testdata[:,:-1,:], testdata[:,1:,:]
 
-    # Create DataLoaders
+    # Create DataLoaders (test_in and test_out refer to the data being in-distribution or out-of-distribution, the out-of-distribution data is used for ICL testing)
     train_dataset = TensorDataset(X_train, y_train)
     test_in_dataset = TensorDataset(X_test_in, y_test_in)
     test_out_dataset = TensorDataset(X_test_out, y_test_out)
@@ -57,12 +71,10 @@ def train(config, traindata, testdata,CL=65, loadmodel = False, fname = 'spring'
         model.load_state_dict(torch.load(loadmodel, map_location=device))
         for name, param in model.named_parameters():
             param.requires_grad = False 
-
     model.train()
 
     # Loss function and optimizer
     criterion = torch.nn.MSELoss()
-
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     # Track the best model
@@ -78,52 +90,60 @@ def train(config, traindata, testdata,CL=65, loadmodel = False, fname = 'spring'
     for epoch in epoch_pbar:
         model.train()
         total_train_loss = 0
-        
         for batch_X, batch_y in train_loader:
             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
             optimizer.zero_grad()
             output = model(batch_X)
+            print("Training: ")
+            print("batch_X", batch_X.shape)
+            print("batch_y: ", batch_y.shape)
+            print("output: ", output.shape)
             if 'linreg' in fname:
-                loss = criterion(output[:, 0::2], batch_y[:,0::2])  # we only want the y values from model output.
+                loss = criterion(output[:, 0::2], batch_y[:,0::2])  # We only want the y values from model output.
             else:
                 loss = criterion(output, batch_y)    
             loss.backward()
             optimizer.step()
-
             total_train_loss += loss.item()
-        
-        # Calculate train loss for the epoch
+        # Calculate Train Loss for the epoch
         epoch_train_loss = total_train_loss / len(train_loader)
         
-
-        # Calculate test loss
+        # Calculate Test Loss (In Distribution and Out Distribution)
         model.eval()
         total_test_in_loss = 0
         total_test_out_loss = 0
-        #TODO: UNCOMMENT THIS, PUT TEST LOSS BACK IN IF WE WANT IT
-        # with torch.no_grad():
-        #     for batch_X, batch_y in test_in_loader:
-        #         batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-        #         output = model(batch_X)
-        #         loss = criterion(output, batch_y)
-        #         total_test_in_loss += loss.item()
-        #     for batch_X, batch_y in test_out_loader:
-        #         batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-        #         output = model(batch_X)
-        #         loss = criterion(output, batch_y)
-        #         total_test_out_loss += loss.item()
 
-        # Calculate test loss for the epoch
+        with torch.no_grad():
+            for batch_X, batch_y in test_in_loader:
+                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                output = model(batch_X)
+                print("In Test: ")
+                print("batch_X", batch_X.shape)
+                print("batch_y: ", batch_y.shape)
+                print("output: ", output.shape)
+                loss = criterion(output, batch_y)
+                total_test_in_loss += loss.item()
+            for batch_X, batch_y in test_out_loader:
+                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                output = model(batch_X)
+                print("Out Test: ")
+                print("batch_X", batch_X.shape)
+                print("batch_y: ", batch_y.shape)
+                print("output: ", output.shape)
+                loss = criterion(output, batch_y)
+                total_test_out_loss += loss.item()
+
+        # Calculate Test Loss for the epoch
         epoch_test_in_loss = total_test_in_loss / len(test_in_loader)
         epoch_test_out_loss = total_test_out_loss / len(test_out_loader)
 
+        # Save intermediate steps
         if epoch % 10 == 0:
             train_losses.append(epoch_train_loss)
             test_in_losses.append(epoch_test_in_loss)
             test_out_losses.append(epoch_test_out_loss)
         if epoch % 100 == 0:    
             torch.save({'train_losses': train_losses, 'test_in_losses': test_in_losses, 'test_out_losses': test_out_losses}, lossesfile)
-
         if epoch % 500 == 0:
             torch.save(model.state_dict(), f'{totalbase}_model_epoch{epoch}.pth')
 
@@ -135,9 +155,7 @@ def train(config, traindata, testdata,CL=65, loadmodel = False, fname = 'spring'
             
         # Update progress bar
         epoch_pbar.set_description(f'Epoch {epoch + 1}/{num_epochs}')
-        epoch_pbar.set_postfix({'Train Loss': f'{epoch_train_loss:.2e}',
-                        'Test-In Loss': f'{epoch_test_in_loss:.2e}',
-                        'Test-Out Loss': f'{epoch_test_out_loss:.2e}'})
+        epoch_pbar.set_postfix({'Train Loss': f'{epoch_train_loss:.2e}','Test-In Loss': f'{epoch_test_in_loss:.2e}','Test-Out Loss': f'{epoch_test_out_loss:.2e}'})
 
     # Save the best model
     torch.save(best_model_state, modelfile)
@@ -145,8 +163,8 @@ def train(config, traindata, testdata,CL=65, loadmodel = False, fname = 'spring'
     
     return model
 
+
 def train_many(LWtitles, datadict, CL, my_task_id, num_tasks):
-    #LWs is a list of tuples of (L,W, title) values to train on
     if my_task_id is None:
         my_task_id = int(sys.argv[1])
     if num_tasks is None:
@@ -154,67 +172,41 @@ def train_many(LWtitles, datadict, CL, my_task_id, num_tasks):
     fnames = LWtitles
     my_fnames = fnames[my_task_id:len(fnames):num_tasks]
     print(my_fnames)
-    for L,W,title in my_fnames:
-        config = get_default_config() #linreg_config()
+    for L, W, title in my_fnames:
+        config = linreg_config()
         config.n_layer = L
         config.n_embd = W
         config.max_seq_length = CL + 1
-        train(config, datadict[f'sequences_train_{title}'], datadict[f'sequences_test_{title}'], fname = title, CL = CL)
+        train(config, datadict['traindata'], datadict[f'testdata'], fname = title, CL = CL)
 
-def whatmodesltrain(LWtitles):
-    numtasks = 40
-    print(len(LWtitles))
-    x = 0
-    # get list of all items from see.txt without spaces or newline character
-    # read in 
 
-    for mytaskid in range(numtasks):
-        lw = LWtitles[mytaskid:len(LWtitles):numtasks]
-        print(f'{mytaskid}: {lw}')
-        x+=len(lw)
-    print(x)
-
+def whatmodelstrain(LWtitles):
+    num_tasks = len(LWtitles)
+    print(num_tasks)
+    for my_task_id in range(num_tasks):
+        lw = LWtitles[my_task_id:len(LWtitles):num_tasks]
+        print(f'{my_task_id}: {lw}')
 
 
 if __name__ == '__main__':
-    #generate_springdata(num_samples = 1000, sequence_length=50, plot = False)
-    # datadict = torch.load('data/spring_data.pth')
-    # traindata = datadict['sequences_train']
-    # trainomegas = datadict['train_omegas']
-    # testdata = datadict['sequences_test']
-    # testomegas = datadict['test_omegas']
-    #generate_dampedspringdata(num_samples = 10000, sequence_length=65, plot = True)
-    # datadict = torch.load('data/dampedspring_data.pth')
-    # datatype = 'underdamped'
-    # traindata1 = datadict[f'sequences_train_{datatype}']
-    # traindata1 = traindata1[torch.randperm(traindata1.size()[0])]
-    # testdata1 = datadict[f'sequences_test_{datatype}']
-    # testdata1 = testdata1[torch.randperm(testdata1.size()[0])]
-    datadict = torch.load('data/dampedspring5_data.pth')
-    my_task_id = None
-    num_tasks = None
-    titles = ['damped']
-    Ls = [1,2,3,4,5]
-    Ws = [2,4,8,16,32]
-    # traindata = datadict[f'sequences_train_{key}']
-    # testdata = datadict[f'sequences_test_{key}']
-    CL = 33
-    LWtitles = []
     
+    datadict = torch.load('data/linreg_data.pth')
+    print(type(datadict))
+    for key in datadict.keys():
+        print(key, datadict[key].shape)
+
+    titles = ['linreg']
+    #Ls = [1,2,3,4,5]
+    #Ws = [2,4,8,16,32]
+    Ls = [2]; Ws = [16]
+    CL = 10
+    LWtitles = []
     for L in Ls:
         for W in Ws:
             for title in titles:
-                LWtitles.append((L,W, title))
-    #whatmodesltrain(LWtitles)
+                LWtitles.append((L,W,title))
+    whatmodelstrain(LWtitles)
+    my_task_id = None
+    num_tasks = None
     train_many(LWtitles, datadict, CL, my_task_id, num_tasks)
-    # traindata2 = datadict['sequences_train_overdamped']
-    # traindata2 = traindata2[torch.randperm(traindata2.size()[0])]
-    # testdata2 = datadict['sequences_test_overdamped']
-    # testdata2 = testdata2[torch.randperm(testdata2.size()[0])]
-    # trained_model2 = train(traindata2,testdata2, fname = 'springoverdamped', CL = CL)
-
-    # traindata3 = torch.cat((datadict['sequences_train_underdamped'], datadict['sequences_train_overdamped']), dim = 0)
-    # traindata3 = traindata3[torch.randperm(traindata3.size()[0])]
-    # testdata3 = torch.cat((datadict['sequences_test_underdamped'], datadict['sequences_test_overdamped']), dim = 0)
-    # testdata3 = testdata3[torch.randperm(testdata3.size()[0])]
-    # trained_model3 = train(traindata3,testdata3, fname = 'springdamped', CL = CL)
+    sys.exit()
